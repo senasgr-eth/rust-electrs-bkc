@@ -1,10 +1,10 @@
 <div align="center">
-  <h1>Rust Junkcoin - IN DEVELOPMENT</h1>
+  <h1>Rust Bitcoin</h1>
 
   <img alt="Rust Bitcoin logo by Hunter Trujillo, see license and source files under /logo" src="./logo/rust-bitcoin.png" width="300" />
 
   <p>Library with support for de/serialization, parsing and executing on data-structures
-    and network messages related to Junkcoin
+    and network messages related to Bitcoin.
   </p>
 
   <p>
@@ -12,7 +12,7 @@
     <a href="https://github.com/rust-bitcoin/rust-bitcoin/blob/master/LICENSE"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
     <a href="https://github.com/rust-bitcoin/rust-bitcoin/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/rust-bitcoin/rust-bitcoin/workflows/Continuous%20integration/badge.svg"></a>
     <a href="https://docs.rs/bitcoin"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-bitcoin-green"/></a>
-    <a href="https://blog.rust-lang.org/2020/02/27/Rust-1.48.0.html"><img alt="Rustc Version 1.48.0+" src="https://img.shields.io/badge/rustc-1.48.0%2B-lightgrey.svg"/></a>
+    <a href="https://blog.rust-lang.org/2021/11/01/Rust-1.56.1.html"><img alt="Rustc Version 1.56.1+" src="https://img.shields.io/badge/rustc-1.56.1%2B-lightgrey.svg"/></a>
     <a href="https://gnusha.org/bitcoin-rust/"><img alt="Chat on IRC" src="https://img.shields.io/badge/irc-%23bitcoin--rust%20on%20libera.chat-blue"></a>
     <a href="https://github.com/model-checking/kani"><imp alt="kani" src="https://github.com/rust-bitcoin/rust-bitcoin/actions/workflows/kani.yaml/badge.svg"></a>
   </p>
@@ -22,11 +22,11 @@
 
 Supports (or should support)
 
-- De/serialization of Bitcoin protocol network messages
-- De/serialization of blocks and transactions
-- Script de/serialization
-- Private keys and address creation, de/serialization and validation (including full BIP32 support)
-- PSBT v0 de/serialization and all but the Input Finalizer role. Use [rust-miniscript](https://docs.rs/miniscript/latest/miniscript/psbt/index.html) to finalize.
+* De/serialization of Bitcoin protocol network messages
+* De/serialization of blocks and transactions
+* Script de/serialization
+* Private keys and address creation, de/serialization and validation (including full BIP32 support)
+* PSBT v0 de/serialization and all but the Input Finalizer role. Use [rust-miniscript](https://docs.rs/miniscript/latest/miniscript/psbt/index.html) to finalize.
 
 For JSONRPC interaction with Bitcoin Core, it is recommended to use
 [rust-bitcoincore-rpc](https://github.com/rust-bitcoin/rust-bitcoincore-rpc).
@@ -69,7 +69,7 @@ For more information please see `./CONTRIBUTING.md`.
 
 ## Minimum Supported Rust Version (MSRV)
 
-This library should always compile with any combination of features on **Rust 1.48.0**.
+This library should always compile with any combination of features on **Rust 1.56.1**.
 
 To build with the MSRV you will likely need to pin a bunch of dependencies, see `./contrib/test.sh`
 for the current list.
@@ -166,7 +166,7 @@ then run with `RUSTFLAGS='--cfg=mutate' cargo +nightly mutagen`.
 ### Code verification
 
 We have started using [kani](https://github.com/model-checking/kani), install with `cargo install --locked kani-verifier`
-(no need to run `cargo kani setup`). Run the tests with `cargo kani`.
+ (no need to run `cargo kani setup`). Run the tests with `cargo kani`.
 
 ## Pull Requests
 
@@ -181,7 +181,7 @@ The CI pipeline requires approval before being run on each MR.
 
 In order to speed up the review process the CI pipeline can be run locally using
 [act](https://github.com/nektos/act). The `fuzz` and `Cross` jobs will be skipped when using `act`
-due to caching being unsupported at this time. We do not _actively_ support `act` but will merge PRs
+due to caching being unsupported at this time. We do not *actively* support `act` but will merge PRs
 fixing `act` issues.
 
 ### Githooks
@@ -189,7 +189,6 @@ fixing `act` issues.
 To assist devs in catching errors _before_ running CI we provide some githooks. If you do not
 already have locally configured githooks you can use the ones in this repository by running, in the
 root directory of the repository:
-
 ```
 git config --local core.hooksPath githooks/
 ```
@@ -205,6 +204,7 @@ maintenance burden and decrease API stability by adding support for other coins.
 
 Our code is public domain so by all means fork it and go wild :)
 
+
 ## Release Notes
 
 Release notes are done per crate, see:
@@ -212,6 +212,7 @@ Release notes are done per crate, see:
 - [bitcoin CHANGELOG](bitcoin/CHANGELOG.md)
 - [hashes CHANGELOG](hashes/CHANGELOG.md)
 - [internals CHANGELOG](internals/CHANGELOG.md)
+
 
 ## Licensing
 

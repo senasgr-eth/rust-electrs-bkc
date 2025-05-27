@@ -10,30 +10,51 @@
 
 use core::fmt;
 
-use hashes::{Hash, HashEngine};
+use hashes::{sha256d, Hash, HashEngine};
+use io::{BufRead, Write};
 
 use super::Weight;
 use crate::blockdata::script;
-use crate::blockdata::transaction::Transaction;
-use crate::consensus::{encode, Decodable, Encodable};
-pub use crate::hash_types::BlockHash;
-use crate::hash_types::{TxMerkleNode, WitnessCommitment, WitnessMerkleNode, Wtxid};
-use crate::internal_macros::impl_consensus_encoding;
+use crate::blockdata::transaction::{Transaction, Txid, Wtxid};
+use crate::consensus::{encode, Decodable, Encodable, Params};
+use crate::internal_macros::{impl_consensus_encoding, impl_hashencode};
 use crate::pow::{CompactTarget, Target, Work};
 use crate::prelude::*;
-use crate::{io, merkle_tree, VarInt};
+use crate::{merkle_tree, VarInt};
+
+hashes::hash_newtype! {
+    /// A bitcoin block hash.
+    pub struct BlockHash(sha256d::Hash);
+    /// A hash of the Merkle tree branch or root for transactions.
+    pub struct TxMerkleNode(sha256d::Hash);
+    /// A hash corresponding to the Merkle tree root for witness data.
+    pub struct WitnessMerkleNode(sha256d::Hash);
+    /// A hash corresponding to the witness structure commitment in the coinbase transaction.
+    pub struct WitnessCommitment(sha256d::Hash);
+}
+impl_hashencode!(BlockHash);
+impl_hashencode!(TxMerkleNode);
+impl_hashencode!(WitnessMerkleNode);
+
+impl From<Txid> for TxMerkleNode {
+    fn from(txid: Txid) -> Self { Self::from_byte_array(txid.to_byte_array()) }
+}
+
+impl From<Wtxid> for WitnessMerkleNode {
+    fn from(wtxid: Wtxid) -> Self { Self::from_byte_array(wtxid.to_byte_array()) }
+}
 
 /// Bitcoin block header.
 ///
 /// Contains all the block's information except the actual transactions, but
-/// including a root of a [merkle tree] commiting to all transactions in the block.
+/// including a root of a [merkle tree] committing to all transactions in the block.
 ///
 /// [merkle tree]: https://en.wikipedia.org/wiki/Merkle_tree
 ///
 /// ### Bitcoin Core References
 ///
 /// * [CBlockHeader definition](https://github.com/bitcoin/bitcoin/blob/345457b542b6a980ccfbc868af0970a6f91d1b82/src/primitives/block.h#L20)
-#[derive(PartialEq, Eq, Clone, PartialOrd, Ord, Hash)]
+#[derive(Copy, PartialEq, Eq, Clone, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct Header {
@@ -49,137 +70,35 @@ pub struct Header {
     pub bits: CompactTarget,
     /// The nonce, selected to obtain a low enough blockhash.
     pub nonce: u32,
-
-    pub aux_data: Option<AuxPow>,
 }
 
-//impl_consensus_encoding!(Header, version, prev_blockhash, merkle_root, time, bits, nonce);
-impl Decodable for Header {
-    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
-        reader: &mut R,
-    ) -> Result<Self, encode::Error> {
-        let base = SimpleHeader::consensus_decode_from_finite_reader(reader)?;
-        if (base.version.0 & 0x100) == 0 {
-            return Ok(Header {
-                version: base.version,
-                prev_blockhash: base.prev_blockhash,
-                merkle_root: base.merkle_root,
-                time: base.time,
-                bits: base.bits,
-                nonce: base.nonce,
-                aux_data: None,
-            });
-        } else {
-            let aux_data = AuxPow::consensus_decode_from_finite_reader(reader)?;
-            Ok(Header {
-                version: base.version,
-                prev_blockhash: base.prev_blockhash,
-                merkle_root: base.merkle_root,
-                time: base.time,
-                bits: base.bits,
-                nonce: base.nonce,
-                aux_data: Some(aux_data),
-            })
-        }
-    }
-
-    fn consensus_decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, encode::Error> {
-        use crate::io::Read as _;
-        let mut r = reader.take(encode::MAX_VEC_SIZE as u64);
-        let thing = SimpleHeader::consensus_decode(r.by_ref())?;
-        if (thing.version.0 & 0x100) == 0 {
-            return Ok(Header {
-                version: thing.version,
-                prev_blockhash: thing.prev_blockhash,
-                merkle_root: thing.merkle_root,
-                time: thing.time,
-                bits: thing.bits,
-                nonce: thing.nonce,
-                aux_data: None,
-            });
-        } else {
-            let aux_data = AuxPow::consensus_decode(r.by_ref())?;
-            Ok(Header {
-                version: thing.version,
-                prev_blockhash: thing.prev_blockhash,
-                merkle_root: thing.merkle_root,
-                time: thing.time,
-                bits: thing.bits,
-                nonce: thing.nonce,
-                aux_data: Some(aux_data),
-            })
-        }
-    }
-}
-impl Encodable for Header {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error> {
-        let mut len = self.version.consensus_encode(writer)?;
-        len += self.prev_blockhash.consensus_encode(writer)?;
-        len += self.merkle_root.consensus_encode(writer)?;
-        len += self.time.consensus_encode(writer)?;
-        len += self.bits.consensus_encode(writer)?;
-        len += self.nonce.consensus_encode(writer)?;
-        if (self.version.0 & 0x100) != 0 {
-            len += self.aux_data.as_ref().unwrap().consensus_encode(writer)?;
-        }
-        Ok(len)
-    }
-}
-
-#[derive(Copy, PartialEq, Eq, Clone, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-pub struct SimpleHeader {
-    /// Block version, now repurposed for soft fork signalling.
-    pub version: Version,
-    /// Reference to the previous block in the chain.
-    pub prev_blockhash: BlockHash,
-    /// The root hash of the merkle tree of transactions in the block.
-    pub merkle_root: TxMerkleNode,
-    /// The timestamp of the block, as claimed by the miner.
-    pub time: u32,
-    /// The target value below which the blockhash must lie.
-    pub bits: CompactTarget,
-    /// The nonce, selected to obtain a low enough blockhash.
-    pub nonce: u32,
-}
-
-impl_consensus_encoding!(SimpleHeader, version, prev_blockhash, merkle_root, time, bits, nonce);
+impl_consensus_encoding!(Header, version, prev_blockhash, merkle_root, time, bits, nonce);
 
 impl Header {
     /// The number of bytes that the block header contributes to the size of a block.
     // Serialized length of fields (version, prev_blockhash, merkle_root, time, bits, nonce)
-    pub fn to_simple_header(&self) -> SimpleHeader {
-        SimpleHeader {
-            version: self.version,
-            prev_blockhash: self.prev_blockhash,
-            merkle_root: self.merkle_root,
-            time: self.time,
-            bits: self.bits,
-            nonce: self.nonce,
-        }
-    }
+    pub const SIZE: usize = 4 + 32 + 32 + 4 + 4 + 4; // 80
+
     /// Returns the block hash.
     pub fn block_hash(&self) -> BlockHash {
         let mut engine = BlockHash::engine();
-        self.to_simple_header().consensus_encode(&mut engine).expect("engines don't error");
+        self.consensus_encode(&mut engine).expect("engines don't error");
         BlockHash::from_engine(engine)
     }
 
     /// Computes the target (range [0, T] inclusive) that a blockhash must land in to be valid.
-    pub fn target(&self) -> Target {
-        self.bits.into()
-    }
+    pub fn target(&self) -> Target { self.bits.into() }
 
     /// Computes the popular "difficulty" measure for mining.
-    pub fn difficulty(&self) -> u128 {
-        self.target().difficulty()
+    ///
+    /// Difficulty represents how difficult the current target makes it to find a block, relative to
+    /// how difficult it would be at the highest possible target (highest target == lowest difficulty).
+    pub fn difficulty(&self, params: impl AsRef<Params>) -> u128 {
+        self.target().difficulty(params)
     }
 
     /// Computes the popular "difficulty" measure for mining and returns a float value of f64.
-    pub fn difficulty_float(&self) -> f64 {
-        self.target().difficulty_float()
-    }
+    pub fn difficulty_float(&self) -> f64 { self.target().difficulty_float() }
 
     /// Checks that the proof-of-work for the block is valid, returning the block hash.
     pub fn validate_pow(&self, required_target: Target) -> Result<BlockHash, ValidationError> {
@@ -196,17 +115,7 @@ impl Header {
     }
 
     /// Returns the total work of the block.
-    pub fn work(&self) -> Work {
-        self.target().to_work()
-    }
-    pub fn get_size(&self) -> usize {
-        /*if self.aux_data.is_none() {
-            return 80
-        }else{
-            80 + self.aux_data.unwrap().get_size()
-        }*/
-        80
-    }
+    pub fn work(&self) -> Work { self.target().to_work() }
 }
 
 impl fmt::Debug for Header {
@@ -223,62 +132,6 @@ impl fmt::Debug for Header {
     }
 }
 
-impl fmt::Debug for SimpleHeader {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Header")
-            //.field("block_hash", &self.block_hash())
-            .field("version", &self.version)
-            .field("prev_blockhash", &self.prev_blockhash)
-            .field("merkle_root", &self.merkle_root)
-            .field("time", &self.time)
-            .field("bits", &self.bits)
-            .field("nonce", &self.nonce)
-            .finish()
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-pub struct MerkleBranch {
-    pub hashes: Vec<BlockHash>,
-    // Bitmask of which side of the merkle hash function the branch_hash element should go on.
-    // Zero means it goes on the right, One means on the left.
-    // It is equal to the index of the starting hash within the widest level
-    // of the merkle tree for this merkle branch.
-    pub side_mask: u32,
-}
-impl_consensus_encoding!(MerkleBranch, hashes, side_mask);
-
-#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-
-pub struct AuxPow {
-    pub coinbase_tx: Transaction,
-    pub block_hash: BlockHash,
-    pub coinbase_branch: MerkleBranch,
-    pub blockchain_branch: MerkleBranch,
-    pub parent_block: SimpleHeader,
-}
-
-impl_consensus_encoding!(
-    AuxPow,
-    coinbase_tx,
-    block_hash,
-    coinbase_branch,
-    blockchain_branch,
-    parent_block
-);
-impl AuxPow {
-    pub fn get_size(&self) -> usize {
-        self.coinbase_tx.total_size()
-            + 32
-            + self.coinbase_branch.hashes.len() * 32
-            + self.blockchain_branch.hashes.len() * 32
-            + 80
-    }
-}
 /// Bitcoin block version number.
 ///
 /// Originally used as a protocol version, but repurposed for soft-fork signaling.
@@ -295,7 +148,7 @@ impl AuxPow {
 #[derive(Copy, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-pub struct Version(pub i32);
+pub struct Version(i32);
 
 impl Version {
     /// The original Bitcoin Block v1.
@@ -318,16 +171,13 @@ impl Version {
     /// Creates a [`Version`] from a signed 32 bit integer value.
     ///
     /// This is the data type used in consensus code in Bitcoin Core.
-    pub fn from_consensus(v: i32) -> Self {
-        Version(v)
-    }
+    #[inline]
+    pub const fn from_consensus(v: i32) -> Self { Version(v) }
 
     /// Returns the inner `i32` value.
     ///
     /// This is the data type used in consensus code in Bitcoin Core.
-    pub fn to_consensus(self) -> i32 {
-        self.0
-    }
+    pub fn to_consensus(self) -> i32 { self.0 }
 
     /// Checks whether the version number is signalling a soft fork at the given bit.
     ///
@@ -350,19 +200,17 @@ impl Version {
 }
 
 impl Default for Version {
-    fn default() -> Version {
-        Self::NO_SOFT_FORK_SIGNALLING
-    }
+    fn default() -> Version { Self::NO_SOFT_FORK_SIGNALLING }
 }
 
 impl Encodable for Version {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.0.consensus_encode(w)
     }
 }
 
 impl Decodable for Version {
-    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+    fn consensus_decode<R: BufRead + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         Decodable::consensus_decode(r).map(Version)
     }
 }
@@ -392,9 +240,7 @@ impl_consensus_encoding!(Block, header, txdata);
 
 impl Block {
     /// Returns the block hash.
-    pub fn block_hash(&self) -> BlockHash {
-        self.header.block_hash()
-    }
+    pub fn block_hash(&self) -> BlockHash { self.header.block_hash() }
 
     /// Checks if merkle root of header matches merkle root of the transaction list.
     pub fn check_merkle_root(&self) -> bool {
@@ -446,7 +292,7 @@ impl Block {
 
     /// Computes the transaction merkle root.
     pub fn compute_merkle_root(&self) -> Option<TxMerkleNode> {
-        let hashes = self.txdata.iter().map(|obj| obj.txid().to_raw_hash());
+        let hashes = self.txdata.iter().map(|obj| obj.compute_txid().to_raw_hash());
         merkle_tree::calculate_root(hashes).map(|h| h.into())
     }
 
@@ -468,7 +314,7 @@ impl Block {
                 // Replace the first hash with zeroes.
                 Wtxid::all_zeros().to_raw_hash()
             } else {
-                t.wtxid().to_raw_hash()
+                t.compute_wtxid().to_raw_hash()
             }
         });
         merkle_tree::calculate_root(hashes).map(|h| h.into())
@@ -488,7 +334,7 @@ impl Block {
     /// > Base size is the block size in bytes with the original transaction serialization without
     /// > any witness-related data, as seen by a non-upgraded node.
     fn base_size(&self) -> usize {
-        let mut size = self.header.get_size();
+        let mut size = Header::SIZE;
 
         size += VarInt::from(self.txdata.len()).size();
         size += self.txdata.iter().map(|tx| tx.base_size()).sum::<usize>();
@@ -501,7 +347,7 @@ impl Block {
     /// > Total size is the block size in bytes with transactions serialized as described in BIP144,
     /// > including base data and witness data.
     pub fn total_size(&self) -> usize {
-        let mut size = self.header.get_size();
+        let mut size = Header::SIZE;
 
         size += VarInt::from(self.txdata.len()).size();
         size += self.txdata.iter().map(|tx| tx.total_size()).sum::<usize>();
@@ -509,16 +355,8 @@ impl Block {
         size
     }
 
-    /// Returns the stripped size of the block.
-    #[deprecated(since = "0.31.0", note = "use Block::base_size() instead")]
-    pub fn strippedsize(&self) -> usize {
-        self.base_size()
-    }
-
     /// Returns the coinbase transaction, if one is present.
-    pub fn coinbase(&self) -> Option<&Transaction> {
-        self.txdata.first()
-    }
+    pub fn coinbase(&self) -> Option<&Transaction> { self.txdata.first() }
 
     /// Returns the block height, as encoded in the coinbase transaction according to BIP34.
     pub fn bip34_block_height(&self) -> Result<u64, Bip34Error> {
@@ -555,27 +393,19 @@ impl Block {
 }
 
 impl From<Header> for BlockHash {
-    fn from(header: Header) -> BlockHash {
-        header.block_hash()
-    }
+    fn from(header: Header) -> BlockHash { header.block_hash() }
 }
 
 impl From<&Header> for BlockHash {
-    fn from(header: &Header) -> BlockHash {
-        header.block_hash()
-    }
+    fn from(header: &Header) -> BlockHash { header.block_hash() }
 }
 
 impl From<Block> for BlockHash {
-    fn from(block: Block) -> BlockHash {
-        block.block_hash()
-    }
+    fn from(block: Block) -> BlockHash { block.block_hash() }
 }
 
 impl From<&Block> for BlockHash {
-    fn from(block: &Block) -> BlockHash {
-        block.block_hash()
-    }
+    fn from(block: &Block) -> BlockHash { block.block_hash() }
 }
 
 /// An error when looking up a BIP34 block height.
@@ -591,6 +421,8 @@ pub enum Bip34Error {
     /// The BIP34 push was negative.
     NegativeHeight,
 }
+
+internals::impl_from_infallible!(Bip34Error);
 
 impl fmt::Display for Bip34Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -628,6 +460,8 @@ pub enum ValidationError {
     BadTarget,
 }
 
+internals::impl_from_infallible!(ValidationError);
+
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use ValidationError::*;
@@ -656,6 +490,7 @@ mod tests {
 
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
+    use crate::Network;
 
     #[test]
     fn test_coinbase_and_bip34() {
@@ -664,7 +499,7 @@ mod tests {
         let block: Block = deserialize(&hex!(BLOCK_HEX)).unwrap();
 
         let cb_txid = "d574f343976d8e70d91cb278d21044dd8a396019e6db70755a0a50e4783dba38";
-        assert_eq!(block.coinbase().unwrap().txid().to_string(), cb_txid);
+        assert_eq!(block.coinbase().unwrap().compute_txid().to_string(), cb_txid);
 
         assert_eq!(block.bip34_block_height(), Ok(100_000));
 
@@ -677,20 +512,8 @@ mod tests {
     }
 
     #[test]
-    fn auxpow_with_segwit_header() {
-        let swahdr = hex!("0401620052e3397a263aa994b1cbade1df094843ee3d4414ec50f700df3e9fe13cde30cca0ceebf962d8757ec7cd8315adf9c5b75a9bf28a7dcda56de9393637f983cc1f0fc64e6583a8011a00000000020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff4403b05527fabe6d6d1c1e91303111f235329180ea89fb2976dd40568db66c3bae570568b007b87a2501000000000000005a554c55506f6f4c2d4c5443000005432cc40200ffffffff02f100a125000000001976a914f8394bea504520ac3ef09fd6a5adf70bede47dae88ac0000000000000000266a24aa21a9edde594137969fb1ab44095d93e452b01b20b9bcc477e8c913eba0e0645f39bf6a012000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b486809f957d7a60782215849b4228e87886b3f7fffbb8c10d0348a7aba810669aa2d585bb12a33e650844b5425c7a483278d63c3198f106b1db5205068c839d60eaefd3e1bf4144601dfbcbaf3dcd60d99d12dc3298b3df36150c745dd9763124002f88ee76619055019f7b1342638a6ad14eafb5204e59d5477a2e48f2fa5228699ae1a30c3c20c5fb669720e854b72190184652c31ead665049ddfd2f2ecef7c239308b9c51ee953c7fc616d74f3dedacfaeed7ea814a2f12555d1c2c9cf745f671f6a17b45f7f81fd005a461887540a1ca32b0e9cc8e2a700a2dfe08ad7d20dacf6e7f57719b5ee5f4911482a8ad08d649406819c565af927714e827f61ab3775c9b3080c18b38b6baff0b9a366da18682d275d16010538bb131c8ad53de8091f013fd342a7abab2d81e3a9034d848bb861dbf3ce3d6b706b63ebf4098242e110807f36604de297359be4ebf8ac927249ad2a1a9167b732cce2fb83775af100000000000000000000000020964243892e5af578b1afd1bce69ba7390aeb9c2858665135b03793d7f77950cd44f14269978a2c988e0c509d5dc6932b7d6685b9b423beddd633db567c5678e218c64e650592001a629d0b09");
-        let hdr: Header = deserialize(&swahdr).unwrap();
-        println!("{:?}", hdr);
-    }
-
-    #[test]
-    fn block2() {
-        let dd = hex!("010000009156352c1818b32e90c9e792efd6a11a82fe7956a630f03bbee236cedae3911a1c525f1049e519256961f407e96e22aef391581de98686524ef500769f777e5fafeda352f0ff0f1e001083540101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0e04afeda3520102062f503253482fffffffff01004023ef3806000023210338bf57d51a50184cf5ef0dc42ecd519fb19e24574c057620262cc1df94da2ae5ac00000000");
-        let block: Block = deserialize(&dd).unwrap();
-        println!("{:?}", block);
-    }
-    #[test]
     fn block_test() {
+        let params = Params::new(Network::Bitcoin);
         // Mainnet block 00000000b0c5a240b2a61d2e75692224efd4cbecdf6eaf4cc2cf477ca7c270e7
         let some_block = hex!("010000004ddccd549d28f385ab457e98d1b11ce80bfea2c5ab93015ade4973e400000000bf4473e53794beae34e64fccc471dace6ae544180816f89591894e0f417a914cd74d6e49ffff001d323b3a7b0201000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0804ffff001d026e04ffffffff0100f2052a0100000043410446ef0102d1ec5240f0d061a4246c1bdef63fc3dbab7733052fbbf0ecd8f41fc26bf049ebb4f9527f374280259e7cfa99c48b0e3f39c51347a19a5819651503a5ac00000000010000000321f75f3139a013f50f315b23b0c9a2b6eac31e2bec98e5891c924664889942260000000049483045022100cb2c6b346a978ab8c61b18b5e9397755cbd17d6eb2fe0083ef32e067fa6c785a02206ce44e613f31d9a6b0517e46f3db1576e9812cc98d159bfdaf759a5014081b5c01ffffffff79cda0945903627c3da1f85fc95d0b8ee3e76ae0cfdc9a65d09744b1f8fc85430000000049483045022047957cdd957cfd0becd642f6b84d82f49b6cb4c51a91f49246908af7c3cfdf4a022100e96b46621f1bffcf5ea5982f88cef651e9354f5791602369bf5a82a6cd61a62501fffffffffe09f5fe3ffbf5ee97a54eb5e5069e9da6b4856ee86fc52938c2f979b0f38e82000000004847304402204165be9a4cbab8049e1af9723b96199bfd3e85f44c6b4c0177e3962686b26073022028f638da23fc003760861ad481ead4099312c60030d4cb57820ce4d33812a5ce01ffffffff01009d966b01000000434104ea1feff861b51fe3f5f8a3b12d0f4712db80e919548a80839fc47c6a21e66d957e9c5d8cd108c7a2d2324bad71f9904ac0ae7336507d785b17a2c115e427a32fac00000000");
         let cutoff_block = hex!("010000004ddccd549d28f385ab457e98d1b11ce80bfea2c5ab93015ade4973e400000000bf4473e53794beae34e64fccc471dace6ae544180816f89591894e0f417a914cd74d6e49ffff001d323b3a7b0201000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0804ffff001d026e04ffffffff0100f2052a0100000043410446ef0102d1ec5240f0d061a4246c1bdef63fc3dbab7733052fbbf0ecd8f41fc26bf049ebb4f9527f374280259e7cfa99c48b0e3f39c51347a19a5819651503a5ac00000000010000000321f75f3139a013f50f315b23b0c9a2b6eac31e2bec98e5891c924664889942260000000049483045022100cb2c6b346a978ab8c61b18b5e9397755cbd17d6eb2fe0083ef32e067fa6c785a02206ce44e613f31d9a6b0517e46f3db1576e9812cc98d159bfdaf759a5014081b5c01ffffffff79cda0945903627c3da1f85fc95d0b8ee3e76ae0cfdc9a65d09744b1f8fc85430000000049483045022047957cdd957cfd0becd642f6b84d82f49b6cb4c51a91f49246908af7c3cfdf4a022100e96b46621f1bffcf5ea5982f88cef651e9354f5791602369bf5a82a6cd61a62501fffffffffe09f5fe3ffbf5ee97a54eb5e5069e9da6b4856ee86fc52938c2f979b0f38e82000000004847304402204165be9a4cbab8049e1af9723b96199bfd3e85f44c6b4c0177e3962686b26073022028f638da23fc003760861ad481ead4099312c60030d4cb57820ce4d33812a5ce01ffffffff01009d966b01000000434104ea1feff861b51fe3f5f8a3b12d0f4712db80e919548a80839fc47c6a21e66d957e9c5d8cd108c7a2d2324bad71f9904ac0ae7336507d785b17a2c115e427a32fac");
@@ -717,9 +540,8 @@ mod tests {
             real_decode.header.validate_pow(real_decode.header.target()).unwrap(),
             real_decode.block_hash()
         );
-        assert_eq!(real_decode.header.difficulty(), 1);
+        assert_eq!(real_decode.header.difficulty(&params), 1);
         assert_eq!(real_decode.header.difficulty_float(), 1.0);
-        // [test] TODO: check the transaction data
 
         assert_eq!(real_decode.total_size(), some_block.len());
         assert_eq!(real_decode.base_size(), some_block.len());
@@ -737,6 +559,7 @@ mod tests {
     // Check testnet block 000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b
     #[test]
     fn segwit_block_test() {
+        let params = Params::new(Network::Testnet);
         let segwit_block = include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw").to_vec();
 
         let decode: Result<Block, _> = deserialize(&segwit_block);
@@ -759,9 +582,8 @@ mod tests {
             real_decode.header.validate_pow(real_decode.header.target()).unwrap(),
             real_decode.block_hash()
         );
-        assert_eq!(real_decode.header.difficulty(), 2456598);
+        assert_eq!(real_decode.header.difficulty(&params), 2456598);
         assert_eq!(real_decode.header.difficulty_float(), 2456598.4399242126);
-        // [test] TODO: check the transaction data
 
         assert_eq!(real_decode.total_size(), segwit_block.len());
         assert_eq!(real_decode.base_size(), 4283);
@@ -843,11 +665,11 @@ mod tests {
 
 #[cfg(bench)]
 mod benches {
+    use io::sink;
     use test::{black_box, Bencher};
 
     use super::Block;
     use crate::consensus::{deserialize, Decodable, Encodable};
-    use crate::EmptyWrite;
 
     #[bench]
     pub fn bench_stream_reader(bh: &mut Bencher) {
@@ -884,7 +706,7 @@ mod benches {
         let block: Block = deserialize(&raw_block[..]).unwrap();
 
         bh.iter(|| {
-            let size = block.consensus_encode(&mut EmptyWrite);
+            let size = block.consensus_encode(&mut sink());
             black_box(&size);
         });
     }
