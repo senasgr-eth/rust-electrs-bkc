@@ -15,8 +15,8 @@ use crate::consensus::{encode, Encodable};
 #[cfg(feature = "secp-recovery")]
 pub use self::message_signing::{MessageSignature, MessageSignatureError};
 
-/// The prefix for signed messages using Bitcoin's message signing protocol.
-pub const BITCOIN_SIGNED_MSG_PREFIX: &[u8] = b"\x18Bitcoin Signed Message:\n";
+/// The prefix for signed messages using Briskcoin's message signing protocol.
+pub const BITCOIN_SIGNED_MSG_PREFIX: &[u8] = b"\x18Briskcoin Signed Message:\n";
 
 #[cfg(feature = "secp-recovery")]
 mod message_signing {

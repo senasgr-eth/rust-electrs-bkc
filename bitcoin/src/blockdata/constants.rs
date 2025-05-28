@@ -34,13 +34,13 @@ pub const DIFFCHANGE_TIMESPAN: u32 = 1 * 60 * 60;
 pub const WITNESS_SCALE_FACTOR: usize = units::weight::WITNESS_SCALE_FACTOR;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
-/// Mainnet (bitcoin) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 0; // 0x00
-/// Mainnet (bitcoin) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 5; // 0x05
-/// Test (tesnet, signet, regtest) pubkey address prefix.
+/// Mainnet (Briskcoin) pubkey address prefix.
+pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 25; // 0x19
+/// Mainnet (Briskcoin) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 33; // 0x21
+/// Testnet (Briskcoin) pubkey address prefix.
 pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 111; // 0x6f
-/// Test (tesnet, signet, regtest) script address prefix.
+/// Testnet (Briskcoin) script address prefix.
 pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 196; // 0xc4
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
@@ -145,15 +145,15 @@ impl_bytes_newtype!(ChainHash, 32);
 
 impl ChainHash {
     // Briskcoin mainnet genesis block hash: 000004ff23fc19ab404c03e1af76ff37403817f60489a0db1e8bd39652f259ec
-    /// `ChainHash` for mainnet briskcoin.
+    /// `ChainHash` for mainnet Briskcoin.
     pub const BITCOIN: Self = Self([
-        236, 89, 242, 82, 150, 211, 139, 30, 219, 160, 137, 4, 246, 23, 56, 64, 55, 255, 118, 175,
-        225, 3, 76, 64, 171, 25, 252, 35, 255, 4, 0, 0,
+        0xec, 0x59, 0xf2, 0x52, 0x96, 0xd3, 0x8b, 0x1e, 0xdb, 0xa0, 0x89, 0x04, 0xf6, 0x17, 0x38, 0x40,
+        0x37, 0xff, 0x76, 0xaf, 0xe1, 0x03, 0x4c, 0x40, 0xab, 0x19, 0xfc, 0x23, 0xff, 0x04, 0x00, 0x00
     ]);
-    /// `ChainHash` for testnet bitcoin.
+    /// `ChainHash` for testnet Briskcoin.
     pub const TESTNET: Self = Self([
-        67, 73, 127, 215, 248, 38, 149, 113, 8, 244, 163, 15, 217, 206, 195, 174, 186, 121, 151,
-        32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
+        0x30, 0xef, 0x8e, 0xd0, 0x9d, 0x8f, 0x57, 0x55, 0xc2, 0xf5, 0x2e, 0x68, 0x69, 0x47, 0x75, 0x03,
+        0x36, 0x29, 0x67, 0x12, 0xaf, 0x5e, 0xe6, 0x29, 0xef, 0x77, 0x40, 0x44, 0x85, 0x8e, 0x00, 0x00
     ]);
     /// `ChainHash` for signet bitcoin.
     pub const SIGNET: Self = Self([
@@ -342,7 +342,7 @@ mod test {
     #[test]
     fn mainnet_chain_hash_test_vector() {
         let got = ChainHash::using_genesis_block_const(Network::Bitcoin).to_string();
-        let want = "ec59f25296d38b1edba08904f617384037ff76afe1034c40ab19fc23ff040000";
+        let want = "000004ff23fc19ab404c03e1af76ff37403817f60489a0db1e8bd39652f259ec";
         assert_eq!(got, want);
     }
 }
